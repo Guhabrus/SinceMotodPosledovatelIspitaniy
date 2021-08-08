@@ -1,0 +1,560 @@
+#pragma once
+#include <fstream>
+#include <thread>
+#include <chrono>
+
+
+/*Начальная температура одинакова и равна 300 К. Задана руками в методах*/
+
+
+#define FirstRun 1
+
+//density - плотность 
+class SensingElement
+{
+private:
+	double lamda, Cp, density;
+	
+	double **T;
+	double *Tx1, *Tx1True, *AbsorbedHeatFlux, *GeneralHeatFlux;
+	std::size_t sizeX=sX, sizeTime = sT;
+	double Length = 0.05, Time;
+	double stepX ,	stepTime;
+	double J=0.;
+	//double *Emissivity;
+
+public:
+	void PrintParameters();
+	void PrintHeatFlux();
+	void PrintTempInX1Point();
+
+	SensingElement(double lamda, double Cp, double density) {
+		this->lamda = lamda;   this->Cp = Cp;   this->density = density;
+
+		T = new double *[sizeTime];
+		for (size_t i = 0; i < sizeTime; i++)
+			T[i] = new double[sizeX+1];
+	
+
+		Tx1					= new double[sizeTime];
+		Tx1True				= new double[sizeTime];
+		AbsorbedHeatFlux	= new double[sizeTime];
+		GeneralHeatFlux		= new double[sizeTime];
+
+	};
+
+	void SetStep() {
+		stepX = Length / (sizeX*1.0);
+		stepTime = Time / (sizeTime*1.0);
+	}
+
+	void DirectHeatTransferProblemFirstGY(int LeftBorder, double *T_GY1)
+	{
+		double *P = new double[sizeX+1];		//Прогоночный коэффициент альфа
+		double *Q = new double[sizeX+1];		//Прогоночный коэффициент бетта
+		double a, b, c, d;
+		double A = lamda / (Cp*density);
+
+		for (int i = LeftBorder; i <= sizeX; i++)
+			T[0][i] = TempStart;
+
+		for (size_t j = 1; j < sizeTime; j++)
+		{
+			for (size_t i = LeftBorder; i <= sizeX; i++)
+			{
+				if (i == LeftBorder)
+				{
+					P[i] = 0.0;
+					Q[i] = T_GY1[j];//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+				}
+				else
+				{
+					a = lamda / pow(stepX, 2);
+					b = ((2 * lamda) / pow(stepX, 2)) + (Cp*density / stepTime);
+					c = lamda / pow(stepX, 2);
+					d = (-density * Cp*T[j - 1][i]) / stepTime;
+
+					P[i] = a / (b - c * P[i - 1]);
+					Q[i] = (c*Q[i - 1] - d) / (b - c * P[i - 1]);
+				}
+			}
+			for (size_t i = sizeX ; i >= LeftBorder; i--)
+			{
+				/*
+				if (i == sizeX )
+					T[j][i] = (2 * A*stepTime*lamda*Q[i - 1] - 2.*A*stepTime*stepX*HeatFluxRight + stepX * stepX*lamda*T[j - 1][i]) /
+					(lamda*stepX*stepX + 2.*A*stepTime*lamda*(1 - P[i - 1]));
+				else
+					T[j][i] = P[i] * T[j][i + 1] + Q[i];*/
+				if (i == sizeX)
+					T[j][i] = 0.0;
+				else
+					T[j][i] = 0.0;
+			}
+		}
+
+		
+		std::ofstream Print;	Print.open("Tx1_True.txt");		Print << "Tx1 = [";
+		
+		for (size_t j = 0; j < sizeTime; j++)
+		{
+			Tx1True[j] = T_GY1[j];
+			
+			//Print << Tx1True[j] << " , ";
+		}
+			/*
+		Print << "]; \n time = [";
+
+		for (size_t j = 1; j < sizeTime; j++)
+		{
+			
+			Print << j*stepTime << " , ";
+		}
+
+		Print << "];\n plot(time, Tx1, 'r');\n hold on;\ngrid on;";*/
+
+		for (int j = 0; j < sizeTime; j++)
+		{
+			
+			Print <<" Time = "<<j*stepTime<<" T = "<< Tx1True[j] << " \n ";
+		}
+
+		delete[] P;
+		delete[] Q;
+	}
+
+	void DirectHeatTransferProblemSecondGY();
+
+	void InversHeatTransferProblem();
+
+	void InversHeatTransferProblemGradiend();
+
+	double  DirectHeatTransferProblemSecondGyForInvers();
+	double	OptimazeStepGradiend(double step_Q);
+
+	void SetSize(int sizeX, int sizeTime) { this->sizeX = sizeX;	this->sizeTime = sizeTime; }
+	//void SetLengthOfTheSensingElement(double Length) { this->Length = Length; }
+	void SetTime(double Time) { this->Time = Time; }
+	
+	double GetStepTime() { return this->stepTime; }
+
+	friend void  SolvingSystemOfAlgebraicEquations(SensingElement &ex1, SensingElement &ex2);//Решение системы уравнений
+
+	SensingElement &operator=(const SensingElement &other);
+
+
+	~SensingElement() {
+		for (int i = 0; i < sizeTime; i++)
+			delete T[i];
+		delete[] T;
+
+		delete[] Tx1;
+		delete[] Tx1True;
+		delete[] AbsorbedHeatFlux;
+		delete[] GeneralHeatFlux;
+	}
+
+	static int sizeTim;
+	//static int sizeX;
+};
+int SensingElement::sizeTim = 100;
+//int SensingElement::sizeTime = sT;
+//int SensingElement::sizeX = sX;
+
+
+
+void SensingElement::DirectHeatTransferProblemSecondGY()
+{
+	double *P = new double[sizeX + 1];		//Прогоночный коэффициент альфа
+	double *Q = new double[sizeX + 1];		//Прогоночный коэффициент бетта
+	double a, b, c, d;	double Finish;
+	double A = lamda / (Cp*density);
+
+	for (size_t i = 0; i <= sizeX; i++)
+		T[0][i] = TempStart;
+	int ptr = 0;
+
+	for (size_t j = 1; j < sizeTime; j++)
+	{
+		do
+		{
+			ptr++;
+
+			if (ptr == FirstRun) { Finish = T[j - 1][0]; }	else { Finish = T[j][0]; }
+
+			for (size_t i = 0; i <= sizeX; i++)
+			{
+
+				if (i == 0)
+				{
+					P[i] = 1.0;
+					Q[i] = (stepX / lamda)*(20000.0- Emissivity * G*pow(Finish, 4));
+				}
+				else
+				{
+					a = lamda / pow(stepX, 2);
+					b = ((2.0 * lamda) / pow(stepX, 2)) + (Cp*density / stepTime);
+					c = lamda / pow(stepX, 2);
+					d = (-density * Cp*T[j - 1][i]) / stepTime;
+
+					P[i] = a / (b - c * P[i - 1]);
+					Q[i] = (c*Q[i - 1] - d) / (b - c * P[i - 1]);
+				}
+			}
+			for (size_t i = sizeX; i >= 0; i--)
+			{
+				if (i == sizeX)
+					T[j][i] = (2 * A*stepTime*lamda*Q[i - 1] - 2.*A*stepTime*stepX*HeatFluxRight + stepX * stepX*lamda*T[j - 1][i]) /
+					(lamda*stepX*stepX + 2.*A*stepTime*lamda*(1 - P[i - 1]));
+				else
+					T[j][i] = P[i] * T[j][i + 1] + Q[i];
+			}
+			
+
+		} while (fabs(Finish - T[j][0]) > 1.1);
+		ptr = 0;
+
+		Tx1[j] = T[j][X1];
+		Tx1True[j] = T[j][X1];
+	}
+
+
+}	//
+
+
+void SensingElement::InversHeatTransferProblem()
+{
+	/*
+	double a, b, c, d;
+	double *P = new double[sizeTime];
+	double *Q = new double[sizeTime];
+
+	for (int i = X1-1 ; i >= 0; i--)
+	{
+		for (int j = 0; j < sizeTime; j++)
+		{
+			if (j == 0)
+			{
+				a = 0.0;
+				b = 1.0;
+				c = 0.0;
+				d = T[0][i];
+
+				P[j] = 0.0;
+				Q[j] = d / b;
+			}
+			else if (j > 0 && j < sizeTime - 1)
+			{
+				a = 1.0 / (2.*stepTime);
+				b = -(lamda / (density*Cp)) / (pow(stepX, 2));
+				c = -1.0 / (2.0*stepTime);
+				d = (lamda / (Cp*density))*(T[j][i + 2] - 2.0*T[j][i + 1]) / pow(stepX, 2);
+				
+				P[j] = -a / (b + c * P[j - 1]);
+				Q[j] = (d - c * Q[j - 1]) / (b + c * P[j - 1]);
+			}
+			else if (j == sizeTime - 1)
+			{
+				a = 0.0;
+				b = 1 - (lamda / (Cp*density))*stepTime / (stepX*stepX);
+				c = -1.0;
+				d = stepTime * ((lamda / (Cp*density))*(T[j][i + 2] - 2.0*T[j][i + 1]) / pow(stepX, 2));
+
+				P[j] = 0.0;
+				Q[j] = (d - c * Q[j - 1]) / (b + c * P[j - 1]);
+			}
+			else { std::cout << " Mistake in OZT \n "; }
+		}
+
+		for (int j = sizeTime - 1; j >= 0; j--)
+		{
+			if (j == sizeTime - 1) {
+				T[j][i] = Q[j];
+			}
+			else if (j >= 0 && j < sizeTime - 1) {
+				T[j][i] = P[j] * T[j + 1][i] + Q[j];
+			}
+		}
+	}
+
+
+
+	delete[] P;
+	delete[] Q;*/
+	double A = lamda / (density*Cp);
+	double p = stepX * stepX / (A*stepTime);
+
+	for (size_t i = X1; i > 0; i--)
+	{
+		for(size_t j=0;j<sizeTime-1;j++)
+			T[j + 1][i - 1] = (2 + p)*T[j + 1][i] - p * T[j][i] - T[j + 1][i + 1];
+	}
+		
+
+	
+
+	for (size_t j = 1; j < sizeTime; j++)
+	{
+		AbsorbedHeatFlux[j] = lamda * (T[j][0] - T[j][1]) / stepX + Cp * density*stepX / 2.*(T[j][0] - T[j - 1][0]) / stepTime;
+	}
+
+	for (size_t j = 1; j < sizeTime; j++)
+		GeneralHeatFlux[j] = AbsorbedHeatFlux[j] + Emissivity * G*pow(T[j][0], 4);
+
+}
+
+
+inline double SensingElement::OptimazeStepGradiend(double step_Q)
+{
+	for (size_t j = 1; j < sizeTime; j++)
+		AbsorbedHeatFlux[j] = 15000.;
+	double step_Q_left = 0, step_Q_right = 3.0, step_Q_middle;
+	double dQ = 1.0;
+	double step_Q = 0.55;
+	double dJ_dQ, dJ_dQ_plus_dt;
+	double *dJ = new double[sizeTime];
+	double f1, f2;
+	std::cout << std::fixed;		std::cout.precision(3);
+	
+		//while (step_Q_right - step_Q_left < 0.01)
+		//{
+
+		//	step_Q_middle = (step_Q_right + step_Q_left) / 2.0;
+
+			//if()
+		f1 = DirectHeatTransferProblemSecondGyForInvers();
+		for (size_t j = 1; j < sizeTime; j++)
+		{
+			//std::thread Stream1([&]() {
+			dJ_dQ = DirectHeatTransferProblemSecondGyForInvers();
+			AbsorbedHeatFlux[j] += dQ;
+			//	});
+
+			//	std::thread Stream2([&]() {
+			dJ_dQ_plus_dt = DirectHeatTransferProblemSecondGyForInvers();
+			AbsorbedHeatFlux[j] -= dQ;
+			//});
+
+			//Stream1.join();	Stream2.join();
+
+			dJ[j] = (dJ_dQ_plus_dt - dJ_dQ) / dQ;
+
+
+		}
+
+		for (size_t j = 1; j < sizeTime; j++)
+			AbsorbedHeatFlux[j] = AbsorbedHeatFlux[j] - dJ[j] * step_Q;
+
+		f2 = DirectHeatTransferProblemSecondGyForInvers();
+		//}
+
+
+		std::cout << " J = " << fabs(f2 - f1) << " f2 = " << f2 << std::endl;
+		//std::this_thread::sleep_for(std::chrono::microseconds(1000));
+	
+	delete[] dJ;
+
+}
+
+void SensingElement::InversHeatTransferProblemGradiend()
+{
+	for (size_t j = 1; j < sizeTime; j++)
+		AbsorbedHeatFlux[j] = 15000.;
+	double step_Q_left = 0, step_Q_right = 3.0, step_Q_middle;
+	double dQ = 1.0;
+	double step_Q = 0.55;
+	double dJ_dQ, dJ_dQ_plus_dt;
+	double *dJ = new double[sizeTime];
+	double f1, f2;
+	std::cout << std::fixed;		std::cout.precision(3);
+	do
+	{
+		//while (step_Q_right - step_Q_left < 0.01)
+		//{
+
+		//	step_Q_middle = (step_Q_right + step_Q_left) / 2.0;
+
+			//if()
+			f1 = DirectHeatTransferProblemSecondGyForInvers();
+			for (size_t j = 1; j < sizeTime; j++)
+			{
+				//std::thread Stream1([&]() {
+				dJ_dQ = DirectHeatTransferProblemSecondGyForInvers();
+				AbsorbedHeatFlux[j] += dQ;
+				//	});
+
+				//	std::thread Stream2([&]() {
+				dJ_dQ_plus_dt = DirectHeatTransferProblemSecondGyForInvers();
+				AbsorbedHeatFlux[j] -= dQ;
+				//});
+
+				//Stream1.join();	Stream2.join();
+
+				dJ[j] = (dJ_dQ_plus_dt - dJ_dQ) / dQ;
+
+
+			}
+
+			for (size_t j = 1; j < sizeTime; j++)
+				AbsorbedHeatFlux[j] = AbsorbedHeatFlux[j] - dJ[j] * step_Q;
+
+			f2 = DirectHeatTransferProblemSecondGyForInvers();
+		//}
+		
+
+		std::cout << " J = " <<fabs(f2-f1)<<" f2 = "<<f2 << std::endl;
+		//std::this_thread::sleep_for(std::chrono::microseconds(1000));
+	} while (fabs(f2-f1)>0.5);
+	
+	for (size_t j = 1; j < sizeTime; j++)
+		GeneralHeatFlux[j] = AbsorbedHeatFlux[j] + Emissivity * G*pow(T[j][0], 4);
+
+	std::ofstream Print;	Print.open("Tx_1_false.txt");	Print << "Tx_1_from_Inverse_Task=[";
+	for (size_t j = 0; j < sizeTime; j++)
+		Print <<" Time = "<<j*stepTime<<"T = "<< T[j][X1] << " \n ";
+
+	/*
+	for (size_t j = 0; j < sizeTime; j++)
+		Print << T[j][X1] << " , ";
+	Print << "];\n time = [";
+
+
+	for (size_t j = 0; j < sizeTime; j++)
+		Print << j*stepTime << " , ";
+	Print << "];\n plot(time, Tx1_from_Invers_Task, 'b');\n hold on;\n grid on;"; */
+	delete[] dJ;
+}
+
+
+double SensingElement::DirectHeatTransferProblemSecondGyForInvers()
+{
+	double *P = new double[sizeX + 1];		//Прогоночный коэффициент альфа
+	double *Q = new double[sizeX + 1];		//Прогоночный коэффициент бетта
+	double a, b, c, d;	double Finish;
+	double A = lamda / (Cp*density);
+
+	for (size_t i = 0; i <= sizeX; i++)
+		T[0][i] = TempStart;
+	
+	for (int j = 1; j < sizeTime; j++)
+	{
+		for (int i = 0; i < sizeX; i++)
+		{
+			if (i == 0)
+			{
+				P[i] = 1;
+				Q[i] = AbsorbedHeatFlux[j] * stepX / lamda;
+			}
+			else
+			{
+				a = lamda / pow(stepX, 2);
+				b = ((2 * lamda) / pow(stepX, 2)) + (Cp*density / stepTime);
+				c = lamda / pow(stepX, 2);
+				d = (-density * Cp*T[j - 1][i]) / stepTime;
+
+				P[i] = a / (b - c * P[i - 1]);
+				Q[i] = (c*Q[i - 1] - d) / (b - c * P[i - 1]);
+			}
+		}
+		for (int i = sizeX-1; i >= 0; i--)
+		{
+			if (i == sizeX-1)
+				T[j][i] = (2 * A*stepTime*lamda*Q[i - 1] - 2.*A*stepTime*stepX*HeatFluxRight + stepX * stepX*lamda*T[j - 1][i]) /
+				(lamda*stepX*stepX + 2.*A*stepTime*lamda*(1 - P[i - 1]));
+			else
+				T[j][i] = P[i] * T[j][i + 1] + Q[i];
+		}
+	}
+	
+
+	double J1=0;
+	for (size_t j = 0; j < sizeTime; j++)
+	{
+		J1 += stepTime * pow((Tx1True[j] - T[j][X1]), 2);
+
+		Tx1[j] = T[j][X1];
+	}
+		
+
+	std::cout << std::fixed;
+	std::cout.precision();
+	//std::cout << "J = " << J1 << std::endl;
+
+	delete[] P;
+	delete[] Q;
+
+	return J1;
+}
+
+
+
+inline SensingElement & SensingElement::operator=(const SensingElement & other)
+{
+	//if (this->GeneralHeatFlux != nullptr)
+	//	delete[] this->GeneralHeatFlux;
+
+	for (size_t j = 1; j < this->sizeTime; j++)
+		this->GeneralHeatFlux[j] = other.GeneralHeatFlux[j];
+
+	return *this;
+
+}
+
+
+
+
+
+
+
+
+void SensingElement::PrintParameters()
+{
+	std::ofstream print;	print.open("Temperatur field.txt");
+
+	for (size_t j = 1; j < sizeTime; j++)
+	{
+		print << " Time = " << j * stepTime << std::endl;
+		for (size_t i = 0; i <= sizeX; i++)
+		{
+			print << " | x = " << i * stepX << " T = " << T[j][i] << "| ";
+		}
+		print << "\n";
+	}
+
+	print.close();
+}
+
+void SensingElement::PrintHeatFlux() {
+	std::ofstream print;	print.open("AbsorbedHeatFlux.txt");
+
+	print << " Q = [";
+	for (size_t j = 25; j < sizeTime; j++)
+		print << AbsorbedHeatFlux[j] << " , ";
+	print << " ];\n time = [";
+	for (size_t j = 25; j < sizeTime; j++)
+		print << j * stepTime << " , ";
+	print << "];\n plot(time, Q,'b');\n hold on; \n grid on;\n";
+	print.close();
+}
+
+void SensingElement::PrintTempInX1Point() {
+	std::ofstream print;	print.open("Температура в точке x1.txt");
+	print << " Tx1true = [";
+	for (size_t j = 1; j < sizeTime; j++)
+		print << Tx1True[j] << " , ";
+	print << " ];\n time = [";
+	for (size_t j = 1; j < sizeTime; j++)
+		print << j * stepTime << " , ";
+	print << "];\n plot(time, Tx1true,'b');\n hold on; \n grid on;\n";
+
+	print << " Tx1 = [";
+	for (size_t j = 1; j < sizeTime; j++)
+		print << Tx1[j] << " , ";
+	print << " ];\n time = [";
+	for (size_t j = 1; j < sizeTime; j++)
+		print << j * stepTime << " , ";
+	print << "];\n plot(time, Tx1,'b');\n hold on; \n grid on;\n";
+
+	print.close();
+	
+}
